@@ -1,7 +1,7 @@
 ﻿#pragma once
 
 /*===============================================
-ImViewGuizmo Single-Header Library - Copyright (c) Marcel Kazemi
+ImViewGuizmo Single-Header Library by Marcel Kazemi
 
 To use, do this in one (and only one) of your C++ files:
 #define IMVIEWGUIZMO_IMPLEMENTATION
@@ -9,8 +9,6 @@ To use, do this in one (and only one) of your C++ files:
 
 In all other files, just include the header as usual:
 #include "ImViewGuizmo.h"
-
-MIT License
 
 Copyright (c) 2025 Marcel Kazemi
 
@@ -42,6 +40,7 @@ SOFTWARE.
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/quaternion.hpp>
+#include <glm/gtx/norm.hpp>
 
 
 namespace ImViewGuizmo {
@@ -54,10 +53,10 @@ namespace ImViewGuizmo {
         float scale = 1.f;
         
         // Axis visuals
-        float lineLength       = 0.5f;
-        float lineWidth        = 4.0f;
-        float circleRadius     = 15.0f;
-        float fadeFactor       = 0.25f;
+        float lineLength = 0.5f;
+        float lineWidth = 4.0f;
+        float circleRadius = 15.0f;
+        float fadeFactor = 0.25f;
 
         // Highlight
         ImU32 highlightColor   = IM_COL32(255, 255, 0, 255);
@@ -82,6 +81,13 @@ namespace ImViewGuizmo {
         // Animation
         bool animateSnap = true;
         float snapAnimationDuration = 0.3f; // in seconds
+
+        // Zoom/Pan Button Visuals
+        float toolButtonRadius = 25.f;
+        float toolButtonInnerPadding = 4.f;
+        ImU32 toolButtonColor = IM_COL32(144, 144, 144, 50);
+        ImU32 toolButtonHoveredColor = IM_COL32(215, 215, 215, 50);
+        ImU32 toolButtonIconColor = IM_COL32(215, 215, 215, 225);
     };
 
     inline Style& GetStyle() {
@@ -97,16 +103,25 @@ namespace ImViewGuizmo {
         vec3 direction; // 3D vector
     };
 
+    enum ActiveTool {
+        TOOL_NONE,
+        TOOL_GIZMO,
+        TOOL_ZOOM,
+        TOOL_PAN
+    };
+
     static constexpr float baseSize = 256.f;
     static constexpr vec3 origin = {0.0f, 0.0f, 0.0f};
-    static constexpr vec3 worldRight        = vec3(1.0f,  0.0f,  0.0f); // +X
-    static constexpr vec3 worldUp      = vec3(0.0f, -1.0f,  0.0f); // -Y
+    static constexpr vec3 worldRight = vec3(1.0f,  0.0f,  0.0f); // +X
+    static constexpr vec3 worldUp = vec3(0.0f, -1.0f,  0.0f); // -Y
     static constexpr vec3 worldForward = vec3(0.0f,  0.0f,  1.0f); // +Z
     static constexpr vec3 axisVectors[3] = {{1,0,0}, {0,1,0}, {0,0,1}};
 
     struct Context {
         int hoveredAxisID = -1;
-        bool isDragging = false;
+        bool isZoomButtonHovered = false;
+        bool isPanButtonHovered = false;
+        ActiveTool activeTool = TOOL_NONE;
         
         // Animation state
         bool isAnimating = false;
@@ -116,8 +131,13 @@ namespace ImViewGuizmo {
         vec3 startUp;
         vec3 targetUp;
 
-        bool IsHovering() const { return hoveredAxisID != -1; }
-        void Reset() { hoveredAxisID = -1; isDragging = false; }
+        bool IsHoveringGizmo() const { return hoveredAxisID != -1; }
+        void Reset() { 
+            hoveredAxisID = -1; 
+            isZoomButtonHovered = false;
+            isPanButtonHovered = false;
+            activeTool = TOOL_NONE;
+        }
     };
 
     // Global context
@@ -127,12 +147,12 @@ namespace ImViewGuizmo {
     }
 
     inline bool IsUsing() {
-        const Context& ctx = GetContext();
-        return ctx.hoveredAxisID != -1 || ctx.isDragging;
+        return GetContext().activeTool != TOOL_NONE;
     }
 
-    inline bool IsHovering() {
-        return GetContext().hoveredAxisID != -1;
+    inline bool IsOver() {
+        const Context& ctx = GetContext();
+        return ctx.hoveredAxisID != -1 || ctx.isZoomButtonHovered || ctx.isPanButtonHovered;
     }
 
     /// @brief Renders and handles the view gizmo logic.
@@ -140,9 +160,24 @@ namespace ImViewGuizmo {
     /// @param cameraRot The rotation of the camera (will be modified).
     /// @param position The top-left screen position where the gizmo should be rendered.
     /// @param snapDistance The distance the camera will snap to when an axis is clicked.
-    /// @param mouseSpeed The rotation speed when dragging the gizmo.
+    /// @param rotationSpeed The rotation speed when dragging the gizmo.
     /// @return True if the camera was modified, false otherwise.
-    bool Manipulate(vec3& cameraPos, quat& cameraRot, ImVec2 position, float snapDistance =  5.f, float mouseSpeed = 0.005f);
+    bool Rotate(vec3& cameraPos, quat& cameraRot, ImVec2 position, float snapDistance =  5.f, float rotationSpeed = 0.005f);
+
+    /// @brief Renders a zoom button and handles its logic.
+    /// @param cameraPos The position of the camera (will be modified).
+    /// @param cameraRot The rotation of the camera (used for direction).
+    /// @param position The top-left screen position of the button.
+    /// @param zoomSpeed The speed/sensitivity of the zoom.
+    /// @return True if the camera was modified, false otherwise.
+    bool Zoom(vec3& cameraPos, const quat& cameraRot, ImVec2 position, float zoomSpeed = 0.005f);
+    
+    /// @brief Renders a pan button and handles its logic.
+    /// @param cameraPos The position of the camera (will be modified).
+    /// @param position The top-left screen position of the button.
+    /// @param panSpeed The speed/sensitivity of the pan.
+    /// @return True if the camera was modified, false otherwise.
+    bool Pan(vec3& cameraPos,  const quat& cameraRot, ImVec2 position, float panSpeed = 0.001f);
 
 } // namespace ImViewGuizmo
 
@@ -150,51 +185,64 @@ namespace ImViewGuizmo {
 #ifdef IMVIEWGUIZMO_IMPLEMENTATION
 namespace ImViewGuizmo {
 
-    bool Manipulate(vec3& cameraPos, quat& cameraRot, ImVec2 position, float snapDistance, float mouseSpeed)
+    // Internal function to reset hover states once per frame
+    static void BeginFrame() {
+        static int lastFrame = -1;
+        int currentFrame = ImGui::GetFrameCount();
+        if (lastFrame != currentFrame) {
+            lastFrame = currentFrame;
+            Context& ctx = GetContext();
+            // Reset hover states, but keep active tool state
+            ctx.hoveredAxisID = -1;
+            ctx.isZoomButtonHovered = false;
+            ctx.isPanButtonHovered = false;
+        }
+    }
+
+    bool Rotate(vec3& cameraPos, quat& cameraRot, ImVec2 position, float snapDistance, float rotationSpeed)
     {
+        BeginFrame();
         ImGuiIO& io = ImGui::GetIO();
         ImDrawList* drawList = ImGui::GetWindowDrawList();
         Context& ctx = GetContext();
         Style& style = GetStyle();
         bool wasModified = false;
 
+        // Global release check
+        if (!ImGui::IsMouseDown(0) && ctx.activeTool != TOOL_NONE)
+            ctx.activeTool = TOOL_NONE;
+    
+
         // Animation logic
         if (ctx.isAnimating) {
             float elapsedTime = static_cast<float>(ImGui::GetTime()) - ctx.animationStartTime;
             float t = std::min(1.0f, elapsedTime / style.snapAnimationDuration);
-            // Apply a simple ease-out curve
             t = 1.0f - (1.0f - t) * (1.0f - t);
 
-            // Interpolate position along an arc by nlerping direction and lerping distance.
-            // This ensures the camera orbits the origin.
             vec3 currentDir;
             if (length(ctx.startPos) > 0.0001f && length(ctx.targetPos) > 0.0001f) {
                 vec3 startDir = normalize(ctx.startPos);
                 vec3 targetDir = normalize(ctx.targetPos);
                 currentDir = normalize(mix(startDir, targetDir, t));
             } else
-                currentDir = normalize(mix(vec3(0,0,1), normalize(ctx.targetPos), t)); // Fallback
+                currentDir = normalize(mix(vec3(0,0,1), normalize(ctx.targetPos), t));
             float startDistance = length(ctx.startPos);
             float targetDistance = length(ctx.targetPos);
             float currentDistance = mix(startDistance, targetDistance, t);
             cameraPos = currentDir * currentDistance;
             
-            // Interpolate the "up" vector to prevent twisting.
             vec3 currentUp = normalize(mix(ctx.startUp, ctx.targetUp, t));
-            // Recalculate the rotation every frame to ensure it's perfectly aimed.
-            cameraRot = quatLookAt(currentDir, currentUp);
+            cameraRot = quatLookAt(normalize(cameraPos), currentUp);
 
             wasModified = true;
 
             if (t >= 1.0f) {
-                // Snap to final values to avoid floating point inaccuracies
                 cameraPos = ctx.targetPos;
                 cameraRot = quatLookAt(normalize(ctx.targetPos), ctx.targetUp);
                 ctx.isAnimating = false;
             }
         }
         
-        // Pre-calculate all scaled dimensions here for clarity and efficiency.
         const float gizmoDiameter = baseSize * style.scale;
         const float scaledCircleRadius = style.circleRadius * style.scale;
         const float scaledBigCircleRadius = style.bigCircleRadius * style.scale;
@@ -203,7 +251,6 @@ namespace ImViewGuizmo {
         const float scaledHighlightRadius = (style.circleRadius + 2.0f) * style.scale;
         const float scaledFontSize = ImGui::GetFontSize() * style.scale * style.labelSize;
 
-        // Generate Matrices & Axis Data
         mat4 worldMatrix = translate(mat4(1.0f), cameraPos) * mat4_cast(cameraRot);
         mat4 viewMatrix = inverse(worldMatrix);
 
@@ -231,10 +278,7 @@ namespace ImViewGuizmo {
             };
         };
 
-        // 2D Selection Logic
-        ctx.hoveredAxisID = -1;
-        // Only update hover state if not actively dragging or animating
-        if (!ctx.isDragging && !ctx.isAnimating) {
+        if (ctx.activeTool == TOOL_NONE && !ctx.isAnimating) {
             const float halfGizmoSize = gizmoDiameter / 2.f;
             ImVec2 mousePos = io.MousePos;
             float distToCenterSq = ImLengthSqr(ImVec2(mousePos.x - position.x, mousePos.y - position.y));
@@ -245,6 +289,7 @@ namespace ImViewGuizmo {
                 for (const auto& axis : axes) {
                     if (axis.depth < -0.1f)
                         continue;
+                    
                     ImVec2 handlePos = worldToScreen(axis.direction * style.lineLength);
                     if (ImLengthSqr(ImVec2(handlePos.x - mousePos.x, handlePos.y - mousePos.y)) < minDistanceSq)
                         ctx.hoveredAxisID = axis.id;
@@ -257,16 +302,14 @@ namespace ImViewGuizmo {
             }
         }
 
-        // Draw Geometry
-        if (ctx.hoveredAxisID == 6 || ctx.isDragging)
+        if (ctx.hoveredAxisID == 6 || ctx.activeTool == TOOL_GIZMO)
             drawList->AddCircleFilled(worldToScreen(origin), scaledBigCircleRadius, style.bigCircleColor);
 
         for (const auto& [id, axis_index, depth, direction] : axes) {
             float factor = mix(style.fadeFactor, 1.0f, (depth + 1.0f) * 0.5f);
-            ImColor axis_color_im = style.axisColors[axis_index];
-            float h, s, v;
-            ImGui::ColorConvertRGBtoHSV(axis_color_im.Value.x, axis_color_im.Value.y, axis_color_im.Value.z, h, s, v);
-            ImU32 final_color = ImColor::HSV(h, s, v * factor);
+            ImVec4 baseColor = ImGui::ColorConvertU32ToFloat4(style.axisColors[axis_index]);
+            ImVec4 fadedColor = ImVec4(baseColor.x, baseColor.y, baseColor.z, baseColor.w * factor);
+            ImU32 final_color = ImGui::ColorConvertFloat4ToU32(fadedColor);
             ImVec2 handlePos = worldToScreen(direction * style.lineLength);
             drawList->AddLine(worldToScreen(origin), handlePos, final_color, scaledLineWidth);
             drawList->AddCircleFilled(handlePos, scaledCircleRadius, final_color);
@@ -274,7 +317,6 @@ namespace ImViewGuizmo {
                 drawList->AddCircle(handlePos, scaledHighlightRadius, style.highlightColor, 0, scaledHighlightWidth);
         }
 
-        // Draw Text Overlay
         ImFont* font = ImGui::GetFont();
         for (const auto& axis : axes) {
             if (axis.depth < -0.1f)
@@ -287,25 +329,25 @@ namespace ImViewGuizmo {
 
         // Drag logic
         if (ImGui::IsMouseDown(0)) {
-            if (!ctx.isDragging && ctx.hoveredAxisID == 6) {
-                ctx.isDragging = true;
-                ctx.isAnimating = false; // Interrupt animation on drag start
+            if (ctx.activeTool == TOOL_NONE && ctx.hoveredAxisID == 6) {
+                ctx.activeTool = TOOL_GIZMO;
+                ctx.isAnimating = false;
             }
-            if (ctx.isDragging) {
-                float yawAngle = -io.MouseDelta.x * mouseSpeed;
-                float pitchAngle = -io.MouseDelta.y * mouseSpeed;
-                quat yawRotation = angleAxis(yawAngle, worldUp);
-                vec3 rightAxis = cameraRot * worldRight;
-                quat pitchRotation = angleAxis(pitchAngle, rightAxis);
-                quat totalRotation = yawRotation * pitchRotation;
-                cameraPos = totalRotation * cameraPos;
-                cameraRot = totalRotation * cameraRot;
-                wasModified = true;
-            }
-        } else
-            ctx.isDragging = false;
+        }
 
-        // Snap logic
+        if(ctx.activeTool == TOOL_GIZMO) {
+            float yawAngle = -io.MouseDelta.x * rotationSpeed;
+            float pitchAngle = -io.MouseDelta.y * rotationSpeed;
+            quat yawRotation = angleAxis(yawAngle, worldUp);
+            vec3 rightAxis = cameraRot * worldRight;
+            quat pitchRotation = angleAxis(pitchAngle, rightAxis);
+            quat totalRotation = yawRotation * pitchRotation;
+            cameraPos = totalRotation * cameraPos;
+            cameraRot = totalRotation * cameraRot;
+            wasModified = true;
+        }
+
+        // Snap
         if (ImGui::IsMouseReleased(0) && ctx.hoveredAxisID >= 0 && ctx.hoveredAxisID <= 5 && !ImGui::IsMouseDragging(0)) {
             int axisIndex = ctx.hoveredAxisID / 2;
             float sign = (ctx.hoveredAxisID % 2 == 0) ? -1.0f : 1.0f;
@@ -313,7 +355,8 @@ namespace ImViewGuizmo {
             vec3 targetPosition = targetDir * snapDistance;
 
             vec3 up = worldUp; 
-            if (axisIndex == 1) up = worldForward;
+            if (axisIndex == 1)
+                up = worldForward;
             vec3 targetUp = -up;
             
             quat targetRotation = quatLookAt(targetDir, targetUp);
@@ -327,7 +370,7 @@ namespace ImViewGuizmo {
                     ctx.animationStartTime = static_cast<float>(ImGui::GetTime());
                     ctx.startPos = cameraPos;
                     ctx.targetPos = targetPosition;
-                    ctx.startUp = cameraRot * vec3(0.0f, 1.0f, 0.0f); // Get current up vector
+                    ctx.startUp = cameraRot * vec3(0.0f, 1.0f, 0.0f);
                     ctx.targetUp = targetUp;
                 }
             } else {
@@ -339,6 +382,145 @@ namespace ImViewGuizmo {
 
         return wasModified;
     }
+
+    bool Zoom(vec3& cameraPos, const quat& cameraRot, ImVec2 position, float zoomSpeed) {
+        BeginFrame();
+        ImGuiIO& io = ImGui::GetIO();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        Context& ctx = GetContext();
+        Style& style = GetStyle();
+        bool wasModified = false;
+
+        const float radius = style.toolButtonRadius * style.scale;
+        const ImVec2 center = { position.x + radius, position.y + radius };
+        
+        bool isHovered = false;
+        if(ctx.activeTool == TOOL_NONE || ctx.activeTool == TOOL_ZOOM)
+            if (ImLengthSqr(ImVec2(io.MousePos.x - center.x, io.MousePos.y - center.y)) < radius * radius)
+                isHovered = true;
+        
+        ctx.isZoomButtonHovered = isHovered;
+
+        // Start Drag
+        if (isHovered && ImGui::IsMouseDown(0) && ctx.activeTool == TOOL_NONE) {
+            ctx.activeTool = TOOL_ZOOM;
+            ctx.isAnimating = false;
+        }
+
+        // Perform Zoom
+        if (ctx.activeTool == TOOL_ZOOM) {
+            if (io.MouseDelta.y != 0.0f) {
+                // Use the camera's local forward vector for zooming
+                vec3 cameraForward = cameraRot * worldForward;
+                cameraPos += cameraForward * -io.MouseDelta.y * zoomSpeed;
+                wasModified = true;
+            }
+        }
+        
+        // Draw
+        ImU32 bgColor = style.toolButtonColor;
+        if (ctx.activeTool == TOOL_ZOOM || isHovered)
+            bgColor = style.toolButtonHoveredColor;
+        drawList->AddCircleFilled(center, radius, bgColor);
+
+        const float p = style.toolButtonInnerPadding * style.scale;
+        const float th = 2.0f * style.scale;
+        const ImU32 iconColor = style.toolButtonIconColor;
+
+        constexpr float iconScale = 0.5f; 
+        // Magnifying glass circle
+        ImVec2 glassCenter = { center.x - (p / 2.0f) * iconScale, center.y - (p / 2.0f) * iconScale };
+        float glassRadius = (radius - p - 1.f) * iconScale;
+        drawList->AddCircle(glassCenter, glassRadius, iconColor, 0, th);
+
+        // Handle
+        ImVec2 handleStart = { center.x + (radius / 2.0f) * iconScale, center.y + (radius / 2.0f) * iconScale };
+        ImVec2 handleEnd = { center.x + (radius - p) * iconScale, center.y + (radius - p) * iconScale };
+        drawList->AddLine(handleStart, handleEnd, iconColor, th);
+
+        // Plus sign (vertical)
+        ImVec2 plusVertStart = { center.x - (p / 2.0f) * iconScale, center.y - (radius / 2.0f) * iconScale };
+        ImVec2 plusVertEnd = { center.x - (p / 2.0f) * iconScale, center.y + (radius / 2.0f - p) * iconScale };
+        drawList->AddLine(plusVertStart, plusVertEnd, iconColor, th);
+
+        // Plus sign (horizontal)
+        ImVec2 plusHorizStart = { center.x + (-radius / 2.0f + p / 2.0f) * iconScale, center.y - (p / 2.0f) * iconScale };
+        ImVec2 plusHorizEnd = { center.x + (radius / 2.0f - p * 1.5f) * iconScale, center.y - (p / 2.0f) * iconScale };
+        drawList->AddLine(plusHorizStart, plusHorizEnd, iconColor, th);
+        
+        return wasModified;
+    }
+    
+    bool Pan(vec3& cameraPos, const quat& cameraRot, ImVec2 position, float panSpeed) {
+        BeginFrame();
+        ImGuiIO& io = ImGui::GetIO();
+        ImDrawList* drawList = ImGui::GetWindowDrawList();
+        Context& ctx = GetContext();
+        Style& style = GetStyle();
+        bool wasModified = false;
+
+        const float radius = style.toolButtonRadius * style.scale;
+        const ImVec2 center = { position.x + radius, position.y + radius };
+
+        // Interaction Logic 
+        bool isHovered = false;
+        if (ctx.activeTool == TOOL_NONE || ctx.activeTool == TOOL_PAN) {
+            if (ImLengthSqr(ImVec2(io.MousePos.x - center.x, io.MousePos.y - center.y)) < radius * radius)
+                isHovered = true;
+        }
+        ctx.isPanButtonHovered = isHovered;
+        
+        // Start Drag
+        if (isHovered && ImGui::IsMouseDown(0) && ctx.activeTool == TOOL_NONE) {
+            ctx.activeTool = TOOL_PAN;
+            ctx.isAnimating = false;
+        }
+
+        // Perform Pan
+        if (ctx.activeTool == TOOL_PAN) {
+            if (io.MouseDelta.x != 0.0f || io.MouseDelta.y != 0.0f) {
+                // Pan along the camera's local axes with natural "drag" controls
+                cameraPos += cameraRot * worldRight * -io.MouseDelta.x * panSpeed; // Inverted horizontal
+                cameraPos += cameraRot * worldUp * io.MouseDelta.y * panSpeed;    // Natural vertical
+                wasModified = true;
+            }
+        }
+
+        // Drawing 
+
+        // Draw the background circle
+        ImU32 bgColor = style.toolButtonColor;
+        if (ctx.activeTool == TOOL_PAN ||isHovered)
+            bgColor = style.toolButtonHoveredColor;
+        drawList->AddCircleFilled(center, radius, bgColor);
+
+        // Draw the icon on top of the background
+        const ImU32 iconColor = style.toolButtonIconColor;
+        const float th = 2.0f * style.scale; // Use scaled thickness for consistency
+
+        // Four-way arrow symbol
+        const float size = radius * 0.5f;
+        const float arm = size * 0.25f; // 1/2 gap
+        // Top Arrow (^) 
+        const ImVec2 topTip = { center.x, center.y - size };
+        drawList->AddLine({ topTip.x - arm, topTip.y + arm }, topTip, iconColor, th);
+        drawList->AddLine({ topTip.x + arm, topTip.y + arm }, topTip, iconColor, th);
+        // Bottom Arrow (v) 
+        const ImVec2 botTip = { center.x, center.y + size };
+        drawList->AddLine({ botTip.x - arm, botTip.y - arm }, botTip, iconColor, th);
+        drawList->AddLine({ botTip.x + arm, botTip.y - arm }, botTip, iconColor, th);
+        // Left Arrow (<) 
+        const ImVec2 leftTip = { center.x - size, center.y };
+        drawList->AddLine({ leftTip.x + arm, leftTip.y - arm }, leftTip, iconColor, th);
+        drawList->AddLine({ leftTip.x + arm, leftTip.y + arm }, leftTip, iconColor, th);
+        // Right Arrow (>) 
+        const ImVec2 rightTip = { center.x + size, center.y };
+        drawList->AddLine({ rightTip.x - arm, rightTip.y - arm }, rightTip, iconColor, th);
+        drawList->AddLine({ rightTip.x - arm, rightTip.y + arm }, rightTip, iconColor, th);
+        
+        return wasModified;
+    }
+
 
 } // namespace ImViewGuizmo
 #endif // IMVIEWGUIZMO_IMPLEMENTATION
