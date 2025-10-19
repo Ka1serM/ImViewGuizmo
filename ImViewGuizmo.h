@@ -45,6 +45,9 @@ SOFTWARE.
     #define IMVIEWGUIZMO_MAT4 glm::mat4
 #endif
 
+#include <algorithm>
+#include <array>
+
 namespace ImViewGuizmo
 {
     using vec3_t = IMVIEWGUIZMO_VEC3;
@@ -596,3 +599,4 @@ namespace ImViewGuizmo {
 
 } // namespace ImViewGuizmo
 #endif // IMVIEWGUIZMO_IMPLEMENTATION
+
