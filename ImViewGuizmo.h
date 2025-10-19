@@ -47,7 +47,6 @@ SOFTWARE.
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 
 namespace ImViewGuizmo
 {
