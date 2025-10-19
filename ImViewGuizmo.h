@@ -45,6 +45,10 @@ SOFTWARE.
     #define IMVIEWGUIZMO_MAT4 glm::mat4
 #endif
 
+#include <algorithm>
+#include <array>
+#include <cmath>
+
 namespace ImViewGuizmo
 {
     using vec3_t = IMVIEWGUIZMO_VEC3;
