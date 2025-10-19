@@ -599,3 +599,4 @@ namespace ImViewGuizmo {
 
 } // namespace ImViewGuizmo
 #endif // IMVIEWGUIZMO_IMPLEMENTATION
+
