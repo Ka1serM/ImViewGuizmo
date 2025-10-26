@@ -33,7 +33,9 @@ SOFTWARE.
 
 #ifndef IMVIEWGUIZMO_VEC3
     #define IMVIEWGUIZMO_USE_GLM_DEFAULTS
+    #ifndef GLM_ENABLE_EXPERIMENTAL
     #define GLM_ENABLE_EXPERIMENTAL
+    #endif
     #include <glm/glm.hpp>
     #include <glm/gtc/quaternion.hpp>
     #include <glm/gtx/quaternion.hpp>
