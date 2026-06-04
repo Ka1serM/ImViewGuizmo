@@ -35,6 +35,7 @@ SOFTWARE.
 #include <array>
 #include <cfloat>
 #include <cmath>
+#include <cstdio>
 
 #ifndef IMVIEWGUIZMO_VEC3
 #define IMVIEWGUIZMO_USE_GLM_DEFAULTS
@@ -63,11 +64,11 @@ namespace ImViewGuizmo {
         inline float get_vec_comp(const vec3_t &v, int index) { return v[index]; }
         inline float get_vec_comp(const vec4_t &v, int index) { return v[index]; }
 
-        inline vec3_t make_vec3(float x, float y, float z) { return vec3_t(x, y, z); }
-        inline vec4_t make_vec4(float x, float y, float z, float w) { return vec4_t(x, y, z, w); }
+        inline vec3_t make_vec3(float x, float y, float z) { return {x, y, z}; }
+        inline vec4_t make_vec4(float x, float y, float z, float w) { return {x, y, z, w}; }
         inline quat_t angleAxis(float angle, const vec3_t &axis) { return glm::angleAxis(angle, axis); }
         inline quat_t quatLookAt(const vec3_t &dir, const vec3_t &up) { return glm::quatLookAt(dir, up); }
-        inline mat4_t mat4_identity() { return mat4_t(1.0f); }
+        inline mat4_t mat4_identity() { return {1.0f}; }
 
         inline vec3_t cross(const vec3_t &a, const vec3_t &b) { return glm::cross(a, b); }
         inline float dot(const vec3_t &a, const vec3_t &b) { return glm::dot(a, b); }
@@ -145,6 +146,12 @@ namespace ImViewGuizmo {
         float transformArrowSize = 12.0f;
         float transformScaleHandleSize = 8.0f;
         float transformRotateRadius = 54.0f;
+
+        // Transform drag settings
+        float transformMoveScale = 1.0f; // multiplier applied to translate movement
+        float transformScaleSpeed = 0.01f; // multiplier applied to scale drag
+        bool transformShowDelta = true; // show displacement label while dragging
+        float transformAxisFadePixels = 6.0f; // hide axis when its screen projection is shorter than this
     };
 
     // Constants
@@ -202,6 +209,8 @@ namespace ImViewGuizmo {
         quat_t transformStartRotation;
         quat_t transformStartOrientation;
         vec3_t transformStartScale;
+        float transformDragDelta = 0.0f;
+        bool frozenAxisVisibility[3] = {true, true, true};
 
         // Animation state
         bool isAnimating = false;
@@ -233,10 +242,6 @@ namespace ImViewGuizmo {
     static float mix(float a, float b, float t) { return a * (1.0f - t) + b * t; }
 
     inline void BeginFrame() {
-        static int lastFrame = -1;
-        const int currentFrame = ImGui::GetFrameCount();
-        if (lastFrame != currentFrame)
-            lastFrame = currentFrame;
         GetContext().Reset();
     }
 
@@ -420,7 +425,8 @@ namespace ImViewGuizmo {
         const vec3_t &position,
         const vec3_t &axis,
         const ImVec2 originScreen,
-        const float desiredScreenLength) {
+        const float desiredScreenLength,
+        const float fadePixelThreshold = 6.0f) {
         TransformAxisState state{};
         state.worldAxis = axis;
 
@@ -437,7 +443,7 @@ namespace ImViewGuizmo {
 
         const ImVec2 screenVector{oneUnitScreen.x - originScreen.x, oneUnitScreen.y - originScreen.y};
         const float projectedLength = sqrtf(screenVector.x * screenVector.x + screenVector.y * screenVector.y);
-        if (projectedLength < 0.0001f) {
+        if (projectedLength < fadePixelThreshold) {
             state.visible = false;
             return state;
         }
@@ -568,7 +574,8 @@ namespace ImViewGuizmo {
                 position,
                 axis,
                 originScreen,
-                style.transformAxisLength * style.scale);
+                style.transformAxisLength * style.scale,
+                style.transformAxisFadePixels * style.scale);
 
             if (operation == TRANSFORM_ROTATE) {
                 ringStates[axisIndex] = MakeTransformRingState(
@@ -620,6 +627,8 @@ namespace ImViewGuizmo {
             ctx.transformStartOrientation = orientation;
             ctx.transformStartScale = scale;
             ctx.isAnimating = false;
+            for (int i = 0; i < 3; ++i)
+                ctx.frozenAxisVisibility[i] = axisStates[i].visible;
         }
 
         if (ctx.activeTool == TOOL_TRANSFORM && ctx.activeTransformAxisID >= 0 && ctx.activeTransformAxisID < 3) {
@@ -635,9 +644,10 @@ namespace ImViewGuizmo {
                         io.MousePos.y - ctx.transformDragStartMouse.y
                     };
                     const float projectedPixels = mouseDelta.x * state.screenDirection.x + mouseDelta.y * state.screenDirection.y;
+                    ctx.transformDragDelta = projectedPixels * state.worldPerPixel * style.transformMoveScale;
                     position = GizmoMath::add_vv(
                         ctx.transformStartPosition,
-                        GizmoMath::multiply_vf(state.worldAxis, projectedPixels * state.worldPerPixel));
+                        GizmoMath::multiply_vf(state.worldAxis, ctx.transformDragDelta));
                     wasModified = true;
                 } else if (ctx.activeTransformOperation == TRANSFORM_SCALE) {
                     const ImVec2 mouseDelta{
@@ -645,11 +655,11 @@ namespace ImViewGuizmo {
                         io.MousePos.y - ctx.transformDragStartMouse.y
                     };
                     const float projectedPixels = mouseDelta.x * state.screenDirection.x + mouseDelta.y * state.screenDirection.y;
-                    const float scaleDelta = projectedPixels * 0.01f;
+                    ctx.transformDragDelta = projectedPixels * style.transformScaleSpeed;
                     scale = ctx.transformStartScale;
-                    if (axisIndex == 0) scale.x = std::max(0.001f, ctx.transformStartScale.x + scaleDelta);
-                    if (axisIndex == 1) scale.y = std::max(0.001f, ctx.transformStartScale.y + scaleDelta);
-                    if (axisIndex == 2) scale.z = std::max(0.001f, ctx.transformStartScale.z + scaleDelta);
+                    if (axisIndex == 0) scale.x = std::max(0.001f, ctx.transformStartScale.x + ctx.transformDragDelta);
+                    if (axisIndex == 1) scale.y = std::max(0.001f, ctx.transformStartScale.y + ctx.transformDragDelta);
+                    if (axisIndex == 2) scale.z = std::max(0.001f, ctx.transformStartScale.z + ctx.transformDragDelta);
                     wasModified = true;
                 } else if (ctx.activeTransformOperation == TRANSFORM_ROTATE) {
                     const ImVec2 mouseDelta{
@@ -658,13 +668,14 @@ namespace ImViewGuizmo {
                     };
                     const float radius = std::max(1.0f, style.transformRotateRadius * style.scale);
                     const float angleDelta = (mouseDelta.x * ctx.transformDragStartTangent.x + mouseDelta.y * ctx.transformDragStartTangent.y) / radius;
+                    ctx.transformDragDelta = angleDelta;
                     const vec3_t axis = GizmoMath::multiply_qv(ctx.transformStartOrientation, axisVectors[axisIndex]);
                     rotation = GizmoMath::multiply_qq(GizmoMath::angleAxis(angleDelta, axis), ctx.transformStartRotation);
                     wasModified = true;
                 }
 
                 ImGui::SetNextFrameWantCaptureMouse(true);
-                ImGui::SetMouseCursor(operation == TRANSFORM_ROTATE ? ImGuiMouseCursor_ResizeAll : ImGuiMouseCursor_ResizeAll);
+                ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
             }
         } else if (ctx.hoveredTransformAxisID != -1) {
             ImGui::SetNextFrameWantCaptureMouse(true);
@@ -695,7 +706,9 @@ namespace ImViewGuizmo {
         } else {
             for (int axisIndex = 0; axisIndex < 3; ++axisIndex) {
                 const auto &state = axisStates[axisIndex];
-                if (!state.visible) {
+                const bool isDragging = ctx.activeTool == TOOL_TRANSFORM;
+                const bool visible = isDragging ? ctx.frozenAxisVisibility[axisIndex] : state.visible;
+                if (!visible) {
                     continue;
                 }
 
@@ -713,9 +726,24 @@ namespace ImViewGuizmo {
             }
         }
 
+        if (style.transformShowDelta && ctx.activeTool == TOOL_TRANSFORM && ctx.activeTransformAxisID >= 0) {
+            const int activeAxis = ctx.activeTransformAxisID;
+            const char *axisNames[] = {"X", "Y", "Z"};
+            char buf[64];
+            if (ctx.activeTransformOperation == TRANSFORM_ROTATE) {
+                const float degrees = ctx.transformDragDelta * (180.0f / 3.14159265f);
+                snprintf(buf, sizeof(buf), "%s: %.2f deg", axisNames[activeAxis], degrees);
+            } else {
+                snprintf(buf, sizeof(buf), "%s: %.4f", axisNames[activeAxis], ctx.transformDragDelta);
+            }
+            const ImVec2 labelPos = {originScreen.x + 12.0f, originScreen.y - 20.0f};
+            drawList->AddText(labelPos, IM_COL32(255, 255, 255, 220), buf);
+        }
+
         if (!io.MouseDown[0] && ctx.activeTool == TOOL_TRANSFORM) {
             ctx.activeTool = TOOL_NONE;
             ctx.activeTransformAxisID = -1;
+            ctx.transformDragDelta = 0.0f;
         }
 
         return wasModified;
@@ -773,38 +801,15 @@ namespace ImViewGuizmo {
         const float scaledFontSize = ImGui::GetFontSize() * style.scale * style.labelSize;
 
         // Gizmo view matrix (transpose of rotation)
-        mat4_t rotMat4 = GizmoMath::mat4_cast(cameraRot);
-
-        vec3_t rcol0 = GizmoMath::get_matrix_col(rotMat4, 0);
-        vec3_t rcol1 = GizmoMath::get_matrix_col(rotMat4, 1);
-        vec3_t rcol2 = GizmoMath::get_matrix_col(rotMat4, 2);
-
-        mat4_t gizmoViewMatrix(1.0f);
-        gizmoViewMatrix[0][0] = rcol0.x;
-        gizmoViewMatrix[0][1] = rcol1.x;
-        gizmoViewMatrix[0][2] = rcol2.x;
-        gizmoViewMatrix[0][3] = 0.0f;
-        gizmoViewMatrix[1][0] = rcol0.y;
-        gizmoViewMatrix[1][1] = rcol1.y;
-        gizmoViewMatrix[1][2] = rcol2.y;
-        gizmoViewMatrix[1][3] = 0.0f;
-        gizmoViewMatrix[2][0] = rcol0.z;
-        gizmoViewMatrix[2][1] = rcol1.z;
-        gizmoViewMatrix[2][2] = rcol2.z;
-        gizmoViewMatrix[2][3] = 0.0f;
-        gizmoViewMatrix[3][0] = 0.0f;
-        gizmoViewMatrix[3][1] = 0.0f;
-        gizmoViewMatrix[3][2] = 0.0f;
-        gizmoViewMatrix[3][3] = 1.0f;
+        const mat4_t gizmoViewMatrix = GizmoMath::transpose(GizmoMath::mat4_cast(cameraRot));
 
         mat4_t gizmoMvp = GizmoMath::multiply_mm(gizmoProjectionMatrix, gizmoViewMatrix);
 
-        // Axes (same ordering/depth calc as glm version)
         std::array<GizmoAxis, 6> axes;
 
-        vec3_t xAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 0);
-        vec3_t yAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 1);
-        vec3_t zAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 2);
+        const vec3_t xAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 0);
+        const vec3_t yAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 1);
+        const vec3_t zAxisInView = GizmoMath::get_matrix_col(gizmoViewMatrix, 2);
 
         axes[0] = {0, 0, xAxisInView.z, axisVectors[0]};
         axes[1] = {1, 0, -xAxisInView.z, GizmoMath::multiply_vf(axisVectors[0], -1.0f)};
@@ -1038,8 +1043,6 @@ namespace ImViewGuizmo {
         const Style &style = GetStyle();
         bool wasModified = false;
 
-        const vec3_t worldRight = GizmoMath::make_vec3(1.0f, 0.0f, 0.0f);
-        const vec3_t worldUp = GizmoMath::make_vec3(0.0f, -1.0f, 0.0f);
         const bool canInteract = !(io.ConfigFlags & ImGuiConfigFlags_NoMouse);
         const float radius = style.toolButtonRadius * style.scale;
         const ImVec2 center = {position.x + radius, position.y + radius};
