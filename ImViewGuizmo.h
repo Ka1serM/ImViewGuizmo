@@ -135,12 +135,13 @@ namespace ImViewGuizmo
 
     // Constants
     const vec3_t origin = GizmoMath::make_vec3(0.f, 0.f, 0.f);
-    const vec3_t worldRight = GizmoMath::make_vec3(1.f, 0.f, 0.f); // +X
-    const vec3_t worldUp = GizmoMath::make_vec3(0.f, -1.f, 0.f);    // -Y
-    const vec3_t worldForward = GizmoMath::make_vec3(0.f, 0.f, 1.f); // +Z
+    const vec3_t worldRight = GizmoMath::make_vec3(1.f, 0.f, 0.f);   // +X
+    const vec3_t worldUp = GizmoMath::make_vec3(0.f, 1.f, 0.f);     // +Y  (right-handed Y-up)
+    const vec3_t worldForward = GizmoMath::make_vec3(0.f, 0.f, -1.f); // -Z (right-handed -Z forward)
     const vec3_t axisVectors[3] = { GizmoMath::make_vec3(1,0,0), GizmoMath::make_vec3(0,1,0), GizmoMath::make_vec3(0,0,1) };
+    // Right-handed Y-up -Z-forward: +X maps to NDC right, +Y maps to NDC up.
     static constexpr mat4_t gizmoProjectionMatrix = {
-        -1.0f,  0.0f,  0.0f,    0.0f,
+         1.0f,  0.0f,  0.0f,    0.0f,
          0.0f,  1.0f,  0.0f,    0.0f,
          0.0f,  0.0f, -0.01f,   0.0f,
          0.0f,  0.0f,  0.0f,    1.0f
@@ -265,13 +266,14 @@ namespace ImViewGuizmo {
             cameraPos = GizmoMath::add_vv(pivot, GizmoMath::multiply_vf(currentDir, currentDistance));
 
             vec3_t currentUp = GizmoMath::normalize(GizmoMath::mix(ctx.startUp, ctx.targetUp, t));
-            cameraRot = GizmoMath::quatLookAt(currentDir, currentUp);
+            // currentDir is pivot→camera; negate for -Z-forward look direction
+            cameraRot = GizmoMath::quatLookAt(GizmoMath::multiply_vf(currentDir, -1.f), currentUp);
 
             wasModified = true;
 
             if (t >= 1.0f) {
                 cameraPos = ctx.targetPos;
-                cameraRot = GizmoMath::quatLookAt(ctx.animTargetDir, ctx.targetUp);
+                cameraRot = GizmoMath::quatLookAt(GizmoMath::multiply_vf(ctx.animTargetDir, -1.f), ctx.targetUp);
                 ctx.isAnimating = false;
             }
         }
@@ -421,16 +423,17 @@ namespace ImViewGuizmo {
             vec3_t targetPosition = GizmoMath::add_vv(pivot, GizmoMath::multiply_vf(targetDir, currentDistance));
 
             vec3_t dirNormalized = GizmoMath::normalize(targetDir);
-            
-            vec3_t targetUp = -worldUp;
-            // If dir is nearly parallel to worldUp, pick a different up to avoid flipping
-            if (fabsf(GizmoMath::dot(dirNormalized, targetUp)) > 0.999f)
-                if (dirNormalized.y > 0.0f)  // facing "up"
-                    targetUp = worldForward;
-                else  // facing "down"
-                    targetUp = -worldForward;
 
-            quat_t targetRotation = GizmoMath::quatLookAt(targetDir, targetUp);
+            // Default up is world +Y; pick a fallback when look direction is parallel to it
+            vec3_t targetUp = worldUp;
+            if (fabsf(GizmoMath::dot(dirNormalized, targetUp)) > 0.999f)
+                if (dirNormalized.y > 0.0f)  // pivot→camera points up → looking down
+                    targetUp = worldForward;
+                else  // pivot→camera points down → looking up
+                    targetUp = GizmoMath::multiply_vf(worldForward, -1.f);
+
+            // targetDir is pivot→camera; negate for -Z-forward look direction
+            quat_t targetRotation = GizmoMath::quatLookAt(GizmoMath::multiply_vf(targetDir, -1.f), targetUp);
 
             if (style.animateSnap && style.snapAnimationDuration > 0.0f) {
                 bool pos_is_different = GizmoMath::length2(GizmoMath::subtract_vv(cameraPos, targetPosition)) > 0.0001f;
@@ -441,7 +444,7 @@ namespace ImViewGuizmo {
                     ctx.animationStartTime = static_cast<float>(ImGui::GetTime());
                     ctx.startPos = cameraPos;
                     ctx.targetPos = targetPosition;
-                    ctx.startUp = GizmoMath::multiply_qv(cameraRot, GizmoMath::multiply_vf(worldUp, -1.0f));
+                    ctx.startUp = GizmoMath::multiply_qv(cameraRot, worldUp);
                     ctx.targetUp = targetUp;
 
                     ctx.animStartDist = GizmoMath::length(GizmoMath::subtract_vv(ctx.startPos, pivot));
@@ -541,8 +544,6 @@ namespace ImViewGuizmo {
         const Style& style = GetStyle();
         bool wasModified = false;
 
-        const vec3_t worldRight = GizmoMath::make_vec3(1.0f, 0.0f, 0.0f);
-        const vec3_t worldUp = GizmoMath::make_vec3(0.0f, -1.0f, 0.0f);
         const bool canInteract = !(io.ConfigFlags & ImGuiConfigFlags_NoMouse);
         const float radius = style.toolButtonRadius * style.scale;
         const ImVec2 center = { position.x + radius, position.y + radius };
