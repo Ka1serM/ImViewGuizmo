@@ -106,15 +106,15 @@ namespace ImViewGuizmo
         
         // Axis
         ImU32 axisColors[3] = {
-            IM_COL32(230, 51, 51, 255), // X
-            IM_COL32(51, 230, 51, 255), // Y
-            IM_COL32(51, 128, 255, 255) // Z
+            IM_COL32(233, 62, 85, 255),  // X
+            IM_COL32(140, 206, 40, 255), // Y
+            IM_COL32(49, 155, 249, 255)  // Z
             };
-        
+
         // Labels
         float labelSize = 1.0f;
-        const char* axisLabels[3] = {"X", "Y", "Z"};
-        ImU32 labelColor = IM_COL32(255, 255, 255, 255);
+        const char* axisLabels[6] = {"X", "-X", "Y", "-Y", "Z", "-Z"};
+        ImU32 labelColor = IM_COL32(14, 18, 24, 255);
 
         //Big Circle
         float bigCircleRadius = 80.0f;
@@ -286,7 +286,9 @@ namespace ImViewGuizmo {
         const float scaledLineWidth = style.lineWidth * style.scale;
         const float scaledHighlightWidth = style.highlightWidth * style.scale;
         const float scaledHighlightRadius = (style.circleRadius + 2.0f) * style.scale;
-        const float scaledFontSize = ImGui::GetFontSize() * style.scale * style.labelSize;
+        // Labels keep a fixed pixel size (matching the rest of the UI) while the
+        // surrounding gizmo shapes scale with the viewport.
+        const float scaledFontSize = ImGui::GetFontSize() * style.labelSize;
 
         // Gizmo view matrix (transpose of rotation) 
         mat4_t rotMat4 = GizmoMath::mat4_cast(cameraRot);
@@ -362,36 +364,63 @@ namespace ImViewGuizmo {
 
         ImFont* font = ImGui::GetFont();
         for (const auto& axis : axes) {
-            float colorFactor = mix(style.fadeFactor, 1.0f, (axis.depth + 1.0f) * 0.5f);
-            ImVec4 baseColor = ImGui::ColorConvertU32ToFloat4(style.axisColors[axis.axisIndex]);
-            baseColor.w *= colorFactor;
-            ImU32 final_color = ImGui::ColorConvertFloat4ToU32(baseColor);
+            // Even ids are the positive axis (+X/+Y/+Z); only that side gets a
+            // spoke and an always-visible label, mirroring the reference gizmo.
+            const bool isPrimary = (axis.id % 2) == 0;
+            const float colorFactor = mix(style.fadeFactor, 1.0f, (axis.depth + 1.0f) * 0.5f);
+            const ImVec4 axisColor = ImGui::ColorConvertU32ToFloat4(style.axisColors[axis.axisIndex]);
 
             const ImVec2 handlePos = worldToScreen(GizmoMath::multiply_vf(axis.direction, style.lineLength));
 
-            ImVec2 lineDir = {handlePos.x - originScreenPos.x, handlePos.y - originScreenPos.y};
-            float lineLengthVal = sqrtf(lineDir.x * lineDir.x + lineDir.y * lineDir.y) + 1e-6f;
-            lineDir.x /= lineLengthVal; lineDir.y /= lineLengthVal;
-            ImVec2 lineEndPos = {handlePos.x - lineDir.x * scaledCircleRadius, handlePos.y - lineDir.y * scaledCircleRadius};
+            ImVec4 fillColorF = axisColor;
+            if (isPrimary) {
+                fillColorF.w *= colorFactor;
+            } else {
+                // Darkened/desaturated so the negative handle reads as secondary
+                fillColorF.x *= 0.6f; fillColorF.y *= 0.6f; fillColorF.z *= 0.6f;
+                fillColorF.w *= colorFactor * 0.92f;
+            }
+            const ImU32 fillColor = ImGui::ColorConvertFloat4ToU32(fillColorF);
 
-            drawList->AddLine(originScreenPos, lineEndPos, final_color, scaledLineWidth);
-            drawList->AddCircleFilled(handlePos, scaledCircleRadius, final_color);
+            if (isPrimary) {
+                ImVec4 lineColorF = axisColor;
+                lineColorF.w *= colorFactor;
+                const ImU32 lineColor = ImGui::ColorConvertFloat4ToU32(lineColorF);
+
+                ImVec2 lineDir = {handlePos.x - originScreenPos.x, handlePos.y - originScreenPos.y};
+                float lineLengthVal = sqrtf(lineDir.x * lineDir.x + lineDir.y * lineDir.y) + 1e-6f;
+                lineDir.x /= lineLengthVal; lineDir.y /= lineLengthVal;
+                ImVec2 lineEndPos = {handlePos.x - lineDir.x * scaledCircleRadius, handlePos.y - lineDir.y * scaledCircleRadius};
+
+                drawList->AddLine(originScreenPos, lineEndPos, lineColor, scaledLineWidth);
+                drawList->AddCircleFilled(handlePos, scaledCircleRadius, fillColor);
+            } else {
+                ImVec4 outlineColorF = axisColor;
+                outlineColorF.w *= colorFactor * 0.95f;
+                const ImU32 outlineColor = ImGui::ColorConvertFloat4ToU32(outlineColorF);
+
+                drawList->AddCircleFilled(handlePos, scaledCircleRadius, fillColor);
+                drawList->AddCircle(handlePos, scaledCircleRadius, outlineColor, 0, scaledLineWidth * 0.5f);
+            }
 
             if (ctx.hoveredAxisID == axis.id)
                 drawList->AddCircle(handlePos, scaledHighlightRadius, style.highlightColor, 0, scaledHighlightWidth);
 
-            float textFactor = std::max(0.0f, std::min(1.0f, 1.0f + axis.depth * 2.5f));
-            if (textFactor > 0.01f) {
-                ImVec4 textColor = ImGui::ColorConvertU32ToFloat4(style.labelColor);
-                textColor.w *= textFactor;
-                const char* label = style.axisLabels[axis.axisIndex];
-                ImVec2 textSize = font->CalcTextSizeA(scaledFontSize, FLT_MAX, 0.f, label);
-                drawList->AddText(font, scaledFontSize, {handlePos.x - textSize.x * 0.5f, handlePos.y - textSize.y * 0.5f}, ImGui::ColorConvertFloat4ToU32(textColor), label);
+            // Negative labels only reveal themselves on hover.
+            if (isPrimary || ctx.hoveredAxisID == axis.id) {
+                float textFactor = std::max(0.0f, std::min(1.0f, 1.0f + axis.depth * 2.5f));
+                if (textFactor > 0.01f) {
+                    ImVec4 textColor = ImGui::ColorConvertU32ToFloat4(style.labelColor);
+                    textColor.w *= textFactor;
+                    const char* label = style.axisLabels[axis.id];
+                    ImVec2 textSize = font->CalcTextSizeA(scaledFontSize, FLT_MAX, 0.f, label);
+                    drawList->AddText(font, scaledFontSize, {handlePos.x - textSize.x * 0.5f, handlePos.y - textSize.y * 0.5f}, ImGui::ColorConvertFloat4ToU32(textColor), label);
+                }
             }
         }
 
-        // Drag start 
-        if (canInteract && io.MouseDown[0] && ctx.activeTool == TOOL_NONE && ctx.hoveredAxisID == 6) {
+        // Drag start
+        if (canInteract && ImGui::IsMouseClicked(0) && ctx.activeTool == TOOL_NONE && ctx.hoveredAxisID == 6) {
             ctx.activeTool = TOOL_GIZMO;
             ctx.isAnimating = false;
         }
@@ -496,7 +525,7 @@ namespace ImViewGuizmo {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
         }
         
-        if (canInteract && isHovered && io.MouseDown[0] && ctx.activeTool == TOOL_NONE) {
+        if (canInteract && isHovered && ImGui::IsMouseClicked(0) && ctx.activeTool == TOOL_NONE) {
             ctx.activeTool = TOOL_DOLLY;
             ctx.isAnimating = false;
         }
@@ -560,7 +589,7 @@ namespace ImViewGuizmo {
             ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeAll);
         }
         
-        if (canInteract && isHovered && io.MouseDown[0] && ctx.activeTool == TOOL_NONE) {
+        if (canInteract && isHovered && ImGui::IsMouseClicked(0) && ctx.activeTool == TOOL_NONE) {
             ctx.activeTool = TOOL_PAN;
             ctx.isAnimating = false;
         }
