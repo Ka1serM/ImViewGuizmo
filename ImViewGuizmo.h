@@ -445,7 +445,7 @@ namespace ImViewGuizmo {
         // Snap on release 
         if (canInteract && ImGui::IsMouseReleased(0) && ctx.hoveredAxisID >= 0 && ctx.hoveredAxisID <= 5 && ctx.activeTool == TOOL_NONE) {
             int axisIndex = ctx.hoveredAxisID / 2;
-            float sign = (ctx.hoveredAxisID % 2 == 0) ? -1.0f : 1.0f;
+            float sign = (ctx.hoveredAxisID % 2 == 0) ? 1.0f : -1.0f;
             vec3_t targetDir = GizmoMath::multiply_vf(axisVectors[axisIndex], sign);
 
             float currentDistance = GizmoMath::length(GizmoMath::subtract_vv(cameraPos, pivot));
